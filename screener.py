@@ -12,6 +12,7 @@ from plotly.subplots import make_subplots
 
 from datasource import (HIST_TTL, IST, TFS, apply_overlay, build, fetch_fyers, fetch_quotes, fetch_yahoo,
                         fyers_configured, fyers_session, fyers_token, market_is_open, secret, token_store)
+from builder import builder_ui, describe, load_frames, run_scan
 from tech import indicators
 
 st.set_page_config(page_title="Pro Technical Screener", page_icon="📈", layout="wide")
@@ -56,10 +57,6 @@ PRESETS = {
     "20-Candle Low Breakdown": "close < low20",
 }
 
-COLS = ["close", "open", "volume", "chg_pct", "rsi14", "ema9", "ema20", "ema50", "ema200", "sma20", "sma50",
-        "sma200", "macd", "macd_sig", "macd_hist", "bb_up", "bb_lo", "bb_width", "bb_pct", "st_dir", "stoch_k",
-        "stoch_d", "adx", "plus_di", "minus_di", "vwap", "atr14", "atr_pct", "vol_ratio", "high20", "low20"]
-OPS = [">", "<", ">=", "<=", "crosses above", "crosses below"]
 SHOW = ["close", "chg_pct", "rsi14", "adx", "stoch_k", "bb_pct", "vwap", "atr_pct", "vol_ratio", "st_dir",
         "ema20", "ema50", "ema200"]
 
@@ -87,31 +84,6 @@ def make_chart(o, symbol, intraday):
     fig.update_layout(height=760, margin=dict(l=5, r=5, t=30, b=5), legend=dict(orientation="h", y=1.04),
                       title=f"{symbol} • {len(o)} candles")
     return fig
-
-
-def visual_builder():
-    n = st.number_input("Kitni conditions?", 1, 6, 2)
-    join = st.radio("Combine karo", ["AND", "OR"], horizontal=True)
-    defaults = ["rsi14", "close", "adx", "vol_ratio", "macd", "stoch_k"]
-    parts = []
-    for i in range(n):
-        a, b, c_, d = st.columns([3, 3, 2, 3])
-        left = a.selectbox("Indicator", COLS, index=COLS.index(defaults[i]), key=f"L{i}", label_visibility="collapsed")
-        op = b.selectbox("Operator", OPS, key=f"op{i}", label_visibility="collapsed")
-        mode = c_.selectbox("vs", ["Value", "Indicator"], key=f"m{i}", label_visibility="collapsed")
-        if mode == "Value":
-            v = d.number_input("Value", value=50.0, key=f"v{i}", label_visibility="collapsed")
-            r, pr = repr(float(v)), repr(float(v))
-        else:
-            r = d.selectbox("Indicator 2", COLS, index=COLS.index("ema200"), key=f"R{i}", label_visibility="collapsed")
-            pr = "prev_" + r
-        if op == "crosses above":
-            parts.append(f"(prev_{left} <= {pr} and {left} > {r})")
-        elif op == "crosses below":
-            parts.append(f"(prev_{left} >= {pr} and {left} < {r})")
-        else:
-            parts.append(f"({left} {op} {r})")
-    return f" {join.lower()} ".join(parts)
 
 
 # ======================= App =======================
@@ -194,46 +166,42 @@ if failed:
 tab_scan, tab_dash, tab_chart = st.tabs(["🔍 Scanner", "📊 Dashboard", "🕯️ Chart"])
 
 with tab_scan:
-    mode = st.radio("Scan kaise banayein?", ["Ready scans", "Visual builder", "Type condition"], horizontal=True)
-    if mode == "Ready scans":
-        query = PRESETS[st.selectbox("Scan", list(PRESETS))]
-    elif mode == "Visual builder":
-        query = visual_builder()
+    mode = st.radio("Scan kaise banayein?", ["🧱 Chartink builder", "Ready scans", "Type condition"], horizontal=True)
+    table = None
+    if mode == "🧱 Chartink builder":
+        clauses, join = builder_ui()
+        st.markdown("**Aapka scan:**")
+        st.code(describe(clauses, join), language="text")
+        frames = load_frames(symbols, tf, source, token, hb, qb, live)[0]
+        table = run_scan(frames, clauses, join, tf != "1d")
     else:
-        query = st.text_area("Condition", "close > ema200 and rsi14 > 60 and adx > 25 and vol_ratio > 1.5",
-                             help="Pichla candle: prev_ lagao, jaise prev_rsi14")
-    st.code(query or "(no condition)", language="python")
-    try:
-        res = data.query(query, engine="python") if query.strip() else data
-    except Exception as e:
-        st.error(f"Condition mein error: {e}")
-        res = None
-    if res is not None:
-        st.subheader(f"✅ {len(res)} stocks mile")
-        if len(res):
-            table = res[SHOW].round(2).sort_values("chg_pct", ascending=False)
+        if mode == "Ready scans":
+            query = PRESETS[st.selectbox("Scan", list(PRESETS))]
+        else:
+            query = st.text_area("Condition", "close > ema200 and rsi14 > 60 and adx > 25 and vol_ratio > 1.5",
+                                 help="Pichla candle: prev_ lagao, jaise prev_rsi14")
+        st.code(query or "(no condition)", language="python")
+        try:
+            res = data.query(query, engine="python") if query.strip() else data
+            table = res[SHOW]
+        except Exception as e:
+            st.error(f"Condition mein error: {e}")
+    if table is not None:
+        st.subheader(f"✅ {len(table)} stocks mile")
+        if len(table):
+            table = table.round(2).sort_values("chg_pct", ascending=False)
             st.dataframe(table, width="stretch")
             st.download_button("⬇️ CSV download", table.to_csv().encode(), "scan_results.csv", "text/csv")
             st.markdown("TradingView: " + " • ".join(
                 f"[{s}](https://www.tradingview.com/chart/?symbol=NSE:{s.replace('&', '_').replace('-', '_')})"
-                for s in res.index[:15]))
+                for s in table.index[:15]))
         else:
             st.info("Abhi koi stock is condition par match nahi karta.")
-    with st.expander("📚 Available indicators / columns"):
+    with st.expander("📚 Type condition ke columns"):
         st.markdown("""
-| # | Indicator | Columns |
-|---|---|---|
-| 1 | **RSI (14)** | `rsi14` |
-| 2 | **EMA** | `ema9` `ema20` `ema50` `ema200` |
-| 3 | **SMA** | `sma20` `sma50` `sma200` |
-| 4 | **MACD (12,26,9)** | `macd` `macd_sig` `macd_hist` |
-| 5 | **Bollinger (20,2)** | `bb_up` `bb_lo` `bb_width` `bb_pct` |
-| 6 | **Supertrend (10,3)** | `st_dir` (1 buy, -1 sell) |
-| 7 | **Stochastic (14,3,3)** | `stoch_k` `stoch_d` |
-| 8 | **ADX / DMI (14)** | `adx` `plus_di` `minus_di` |
-| 9 | **VWAP** | `vwap` (intraday session / 1d = 20-day) |
-| 10 | **ATR (14)** | `atr14` `atr_pct` |
-| + | Price / Volume | `open` `close` `volume` `chg_pct` `vol_ratio` `high20` `low20` |
+`rsi14` `ema9` `ema20` `ema50` `ema200` `sma20` `sma50` `sma200` `macd` `macd_sig` `macd_hist`
+`bb_up` `bb_lo` `bb_width` `bb_pct` `st_dir` `stoch_k` `stoch_d` `adx` `plus_di` `minus_di` `vwap`
+`atr14` `atr_pct` `open` `close` `volume` `chg_pct` `vol_ratio` `high20` `low20`
 
 Pichla candle: `prev_` lagao (`prev_rsi14`, `prev_close`).
 """)
