@@ -454,4 +454,126 @@ with st.sidebar:
         st.cache_data.clear()
     auto = st.checkbox("Auto refresh", value=False)
     every = st.slider("Every (sec)", 10, 300, 15, 5, disabled=not auto)
-    if source == "fyers" and FYER
+    if source == "fyers" and FYERif source == "fyers" and FYERS_CONFIGURED and st.button("🔐 Fyers dobara login", width="stretch"):
+        token_store().clear()
+        st.rerun()
+
+st.title("📈 Pro Technical Screener")
+
+token = ""
+if source == "fyers":
+    if not FYERS_CONFIGURED:
+        st.warning("Fyers setup baaki hai. Streamlit **Settings → Secrets** mein FYERS_APP_ID, FYERS_SECRET, "
+                   "FYERS_REDIRECT daalo (`secrets_example.toml` dekho). Tab tak sidebar mein Yahoo chuno.")
+        st.stop()
+    token = fyers_token()
+    if not token:
+        st.info("Fyers se aaj ka login karna hoga (din mein ek baar).")
+        st.link_button("🔐 Fyers se Login", fyers_session().generate_authcode(), type="primary")
+        st.caption("Login ke baad app apne aap khul jaayegi. Ya sidebar se Yahoo chuno.")
+        st.stop()
+
+if not symbols:
+    st.warning("Sidebar mein kam se kam ek symbol daalein.")
+    st.stop()
+
+now_ts = time.time()
+hb = int(now_ts // (HIST_TTL[tf] if source == "fyers" else 60))
+qb = int(now_ts // 10)
+with st.spinner("Data la raha hoon... (pehli baar 10-20 sec lag sakte hain)"):
+    data, failed, err, nq = build(symbols, tf, source, token, hb, qb, live)
+
+if data.empty:
+    st.error(f"Data nahi mila. {('API: ' + err) if err else ''}")
+    if source == "fyers":
+        st.caption("Token expire ho gaya ho sakta hai — sidebar mein 'Fyers dobara login' dabao.")
+    st.stop()
+
+tag = f"Fyers live ({nq} LTP)" if source == "fyers" and nq else ("Fyers" if source == "fyers" else "Yahoo delayed")
+st.caption(f"{len(data)} stocks • {tf} • {tag} • updated {datetime.now(IST):%H:%M:%S}"
+           + (f" • ⚠️ {len(failed)} load nahi hue" if failed else ""))
+if failed:
+    with st.expander("Load na hone wale symbols"):
+        st.write(", ".join(failed) + " — symbol rename/delist ho sakta hai." + (f" API: {err}" if err else ""))
+
+tab_scan, tab_dash, tab_chart = st.tabs(["🔍 Scanner", "📊 Dashboard", "🕯️ Chart"])
+
+with tab_scan:
+    mode = st.radio("Scan kaise banayein?", ["Ready scans", "Visual builder", "Type condition"], horizontal=True)
+    if mode == "Ready scans":
+        query = PRESETS[st.selectbox("Scan", list(PRESETS))]
+    elif mode == "Visual builder":
+        query = visual_builder()
+    else:
+        query = st.text_area("Condition", "close > ema200 and rsi14 > 60 and adx > 25 and vol_ratio > 1.5",
+                             help="Pichla candle: prev_ lagao, jaise prev_rsi14")
+    st.code(query or "(no condition)", language="python")
+    try:
+        res = data.query(query, engine="python") if query.strip() else data
+    except Exception as e:
+        st.error(f"Condition mein error: {e}")
+        res = None
+    if res is not None:
+        st.subheader(f"✅ {len(res)} stocks mile")
+        if len(res):
+            table = res[SHOW].round(2).sort_values("chg_pct", ascending=False)
+            st.dataframe(table, width="stretch")
+            st.download_button("⬇️ CSV download", table.to_csv().encode(), "scan_results.csv", "text/csv")
+            st.markdown("TradingView: " + " • ".join(
+                f"[{s}](https://www.tradingview.com/chart/?symbol=NSE:{s.replace('&', '_').replace('-', '_')})"
+                for s in res.index[:15]))
+        else:
+            st.info("Abhi koi stock is condition par match nahi karta.")
+    with st.expander("📚 Available indicators / columns"):
+        st.markdown("""
+| # | Indicator | Columns |
+|---|---|---|
+| 1 | **RSI (14)** | `rsi14` |
+| 2 | **EMA** | `ema9` `ema20` `ema50` `ema200` |
+| 3 | **SMA** | `sma20` `sma50` `sma200` |
+| 4 | **MACD (12,26,9)** | `macd` `macd_sig` `macd_hist` |
+| 5 | **Bollinger (20,2)** | `bb_up` `bb_lo` `bb_width` `bb_pct` |
+| 6 | **Supertrend (10,3)** | `st_dir` (1 buy, -1 sell) |
+| 7 | **Stochastic (14,3,3)** | `stoch_k` `stoch_d` |
+| 8 | **ADX / DMI (14)** | `adx` `plus_di` `minus_di` |
+| 9 | **VWAP** | `vwap` (intraday session / 1d = 20-day) |
+| 10 | **ATR (14)** | `atr14` `atr_pct` |
+| + | Price / Volume | `open` `close` `volume` `chg_pct` `vol_ratio` `high20` `low20` |
+
+Pichla candle: `prev_` lagao (`prev_rsi14`, `prev_close`).
+""")
+
+with tab_dash:
+    st.subheader("Saare scans ek saath")
+    rows = []
+    for name, q in PRESETS.items():
+        try:
+            r = data.query(q, engine="python")
+        except Exception:
+            continue
+        rows.append({"Scan": name, "Count": len(r),
+                     "Stocks": ", ".join(r.index[:12]) + (" ..." if len(r) > 12 else "")})
+    st.dataframe(pd.DataFrame(rows).sort_values("Count", ascending=False), width="stretch", hide_index=True)
+    up = int((data["chg_pct"] > 0).sum())
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Advancing", up)
+    c2.metric("Declining", len(data) - up)
+    c3.metric("Avg RSI", f"{data['rsi14'].mean():.1f}")
+
+with tab_chart:
+    pick = st.selectbox("Stock", list(data.index))
+    try:
+        if source == "fyers":
+            frames, _, _ = fetch_fyers(symbols, tf, token, hb)
+            q = fetch_quotes(tuple(frames), token, qb) if live else {}
+        else:
+            frames, _, _ = fetch_yahoo(symbols, tf, hb)
+            q = {}
+        df = apply_overlay(frames[pick], q.get(pick), tf)
+        st.plotly_chart(make_chart(indicators(df, tf != "1d"), pick, tf != "1d"), width="stretch")
+    except Exception as e:
+        st.error(f"Chart load nahi hua: {e}")
+
+if auto:
+    time.sleep(every)
+    st.rerun()
