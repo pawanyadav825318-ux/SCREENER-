@@ -2,19 +2,14 @@
 import operator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-
 import numpy as np
 import pandas as pd
 import streamlit as st
 import yfinance as yf
-
 from datasource import IST, OHLCV, apply_overlay, fetch_fyers, fetch_quotes, fetch_yahoo, fy_client, throttle
 from tech import adx_dmi, atr, rsi, stochastic, vwap
-
 MTF_DAYS = 900  # ~2.5 saal daily history (weekly/monthly resample ke liye)
 TF_RULE = {"Chart timeframe": "chart", "Daily": None, "Weekly": "W-FRI", "Monthly": "ME"}
-
-
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_frames(symbols, tf, source, token, hist_bucket, quote_bucket, live):
     """Chart timeframe ke candles (live LTP ke saath). Returns (frames, failed, err, n_quotes)."""
@@ -25,8 +20,6 @@ def load_frames(symbols, tf, source, token, hist_bucket, quote_bucket, live):
         frames, failed, err = fetch_yahoo(symbols, tf, hist_bucket)
         quotes = {}
     return {s: apply_overlay(d, quotes.get(s), tf) for s, d in frames.items()}, failed, err, len(quotes)
-
-
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_daily_long(symbols, source, token, bucket):
     """Lambi daily history — Daily/Weekly/Monthly conditions (multi-timeframe) resample karne ke liye."""
@@ -34,7 +27,6 @@ def load_daily_long(symbols, source, token, bucket):
         client = fy_client(token)
         today = datetime.now(IST).date()
         frm, to = (today - timedelta(days=MTF_DAYS)).isoformat(), today.isoformat()
-
         def one(sym):
             throttle()
             r = client.history(data={"symbol": f"NSE:{sym}-EQ", "resolution": "D", "date_format": "1",
@@ -47,7 +39,6 @@ def load_daily_long(symbols, source, token, bucket):
             if len(d) < 30:
                 raise RuntimeError("too few bars")
             return d
-
         frames = {}
         with ThreadPoolExecutor(max_workers=4) as ex:
             futs = {s: ex.submit(one, s) for s in symbols}
@@ -57,7 +48,6 @@ def load_daily_long(symbols, source, token, bucket):
                 except Exception:
                     pass
         return frames
-
     tickers = [s + ".NS" for s in symbols]
     raw = yf.download(tickers, period="3y", interval="1d", group_by="ticker",
                       threads=True, progress=False, auto_adjust=False)
@@ -71,15 +61,11 @@ def load_daily_long(symbols, source, token, bucket):
         except Exception:
             pass
     return frames
-
-
 def resample_ohlc(daily, rule):
     if rule is None:
         return daily
     agg = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
     return daily.resample(rule).agg(agg).dropna(subset=["close"])
-
-
 # ---------------- Indicator registry ----------------
 def _supertrend(d, p, f, intra):
     mult = float(p["mult"])
@@ -97,44 +83,30 @@ def _supertrend(d, p, f, intra):
             dirn[i] = dirn[i - 1]
         line[i] = flb[i] if dirn[i] == 1 else fub[i]
     return pd.Series(dirn if f.startswith("Direction") else line, index=d.index)
-
-
 def _macd(d, p, f, intra):
     c = d["close"]
     m = c.ewm(span=int(p["fast"]), adjust=False).mean() - c.ewm(span=int(p["slow"]), adjust=False).mean()
     s = m.ewm(span=int(p["signal"]), adjust=False).mean()
     return {"Line": m, "Signal": s, "Histogram": m - s}[f]
-
-
 def _bb(d, p, f, intra):
     n, k = int(p["period"]), float(p["std"])
     mid, sd = d["close"].rolling(n).mean(), d["close"].rolling(n).std()
     return {"Upper": mid + k * sd, "Middle": mid, "Lower": mid - k * sd}[f]
-
-
 def _stoch(d, p, f, intra):
     kk, dd = stochastic(d, int(p["k"]), int(p["smooth"]), int(p["d"]))
     return kk if f == "%K" else dd
-
-
 def _adx(d, p, f, intra):
     a, pdi, mdi = adx_dmi(d, int(p["period"]))
     return {"ADX": a, "+DI": pdi, "-DI": mdi}[f]
-
-
 def _cci(d, p, f, intra):
     n = int(p["period"])
     tp = (d["high"] + d["low"] + d["close"]) / 3
     dev = tp.rolling(n).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
     return (tp - tp.rolling(n).mean()) / (0.015 * dev)
-
-
 def _willr(d, p, f, intra):
     n = int(p["period"])
     hh, ll = d["high"].rolling(n).max(), d["low"].rolling(n).min()
     return -100 * (hh - d["close"]) / (hh - ll).replace(0, np.nan)
-
-
 def _mfi(d, p, f, intra):
     n = int(p["period"])
     tp = (d["high"] + d["low"] + d["close"]) / 3
@@ -142,12 +114,8 @@ def _mfi(d, p, f, intra):
     pos = mf.where(tp > tp.shift(), 0.0).rolling(n).sum()
     neg = mf.where(tp < tp.shift(), 0.0).rolling(n).sum()
     return (100 - 100 / (1 + pos / neg.replace(0, np.nan))).where(neg != 0, 100.0)
-
-
 def _col(name):
     return lambda d, p, f, intra: d[name]
-
-
 IND = {  # name: (params [(id, label, default)], fields, function)
     "Close": ([], None, _col("close")),
     "Open": ([], None, _col("open")),
@@ -183,8 +151,6 @@ CMP = {">": operator.gt, "<": operator.lt, ">=": operator.ge, "<=": operator.le,
 OFFSETS = ["Latest"] + [f"{i} candle pehle" for i in range(1, 11)]
 DEFAULT = {0: ("RSI", "<", "Number"), 1: ("Close", ">", "EMA")}
 PDEF = {"g0_c1R_p_period": 200, "g0_c0L_p_period": 14}
-
-
 # ---------------- Text helpers ----------------
 def op_text(o, mult=True):
     if "num" in o:
@@ -199,8 +165,6 @@ def op_text(o, mult=True):
     if mult and o.get("mult", 1.0) != 1.0:
         s = f"{o['mult']:g} x {s}"
     return s
-
-
 def describe_clause(c):
     tf = c.get("tf", "Chart timeframe")
     pre = "" if tf == "Chart timeframe" else f"[{tf}] "
@@ -208,15 +172,11 @@ def describe_clause(c):
     if c["within"] > 1:
         t += f"  (pichhle {c['within']} candles mein kabhi bhi)"
     return t
-
-
 def describe_group(g, n, numbered):
     j = g["join"].split()[0]
     body = f"\n  {j} ".join(describe_clause(c) for c in g["clauses"]) or "(koi condition nahi)"
     body = "  " + body.replace("\n", "\n  ")
     return f"Group {n}:\n{body}" if numbered else body.strip()
-
-
 def describe(groups, top_join):
     if not groups:
         return "(koi condition nahi)"
@@ -224,8 +184,6 @@ def describe(groups, top_join):
         return describe_group(groups[0], 1, numbered=False)
     j = top_join.split()[0]
     return f"\n{j} ".join(describe_group(g, i + 1, numbered=True) for i, g in enumerate(groups))
-
-
 # ---------------- UI ----------------
 def operand_ui(key, side, default_name):
     names = (["Number"] if side == "right" else []) + list(IND)
@@ -248,8 +206,6 @@ def operand_ui(key, side, default_name):
     if side == "right":
         mult = float(st.number_input("x Multiplier (jaise 1.5 x)", value=1.0, step=0.05, key=f"{key}_m"))
     return {"ind": name, "params": params, "field": field, "off": off, "mult": mult}
-
-
 def clause_ui(prefix, cid, n):
     deleted = False
     with st.container(border=True):
@@ -265,8 +221,6 @@ def clause_ui(prefix, cid, n):
         right = operand_ui(f"{prefix}c{cid}R", "right", rn)
         within = int(st.number_input("Pichhle kitne candles mein? (1 = sirf latest)", 1, 20, 1, key=f"{prefix}w{cid}"))
     return {"left": left, "op": op, "right": right, "within": within, "tf": tf}, deleted
-
-
 def group_ui(gid, n, allow_delete):
     ss = st.session_state
     ss.setdefault(f"g{gid}_ids", [0, 1] if gid == 0 else [0])
@@ -291,8 +245,6 @@ def group_ui(gid, n, allow_delete):
             ss[f"g{gid}_next"] += 1
             st.rerun()
     return {"clauses": clauses, "join": join}, del_group
-
-
 def builder_ui():
     ss = st.session_state
     ss.setdefault("grp_ids", [0])
@@ -314,8 +266,6 @@ def builder_ui():
         ss["grp_next"] += 1
         st.rerun()
     return groups, top_join
-
-
 # ---------------- Engine ----------------
 def _get_df(sym, tf, chart_frames, daily_frames):
     if tf == "Chart timeframe":
@@ -324,15 +274,11 @@ def _get_df(sym, tf, chart_frames, daily_frames):
     if daily is None:
         return None
     return resample_ohlc(daily, TF_RULE[tf])
-
-
 def _series(df, o, intraday, cache, tf):
     key = (tf, o["ind"], tuple(o["params"].items()), o["field"])
     if key not in cache:
         cache[key] = IND[o["ind"]][2](df, o["params"], o["field"], intraday)
     return cache[key]
-
-
 def _val(sym, o, back, cache, chart_frames, daily_frames, chart_intraday, tf, mult=True):
     if "num" in o:
         return o["num"]
@@ -346,8 +292,6 @@ def _val(sym, o, back, cache, chart_frames, daily_frames, chart_intraday, tf, mu
         return np.nan
     v = s.iloc[i]
     return v * o["mult"] if mult else v
-
-
 def _clause_ok(sym, c, cache, chart_frames, daily_frames, chart_intraday):
     tf = c.get("tf", "Chart timeframe")
     for back in range(c["within"]):
@@ -362,15 +306,11 @@ def _clause_ok(sym, c, cache, chart_frames, daily_frames, chart_intraday):
         if ok:
             return True
     return False
-
-
 def _group_ok(sym, g, cache, chart_frames, daily_frames, chart_intraday):
     if not g["clauses"]:
         return True
     res = [_clause_ok(sym, c, cache, chart_frames, daily_frames, chart_intraday) for c in g["clauses"]]
     return all(res) if g["join"].startswith("AND") else any(res)
-
-
 def run_scan(chart_frames, daily_frames, groups, top_join, chart_intraday):
     rows = {}
     for sym, df in chart_frames.items():
