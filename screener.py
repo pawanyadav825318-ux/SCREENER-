@@ -12,7 +12,7 @@ from plotly.subplots import make_subplots
 
 from datasource import (HIST_TTL, IST, TFS, apply_overlay, build, fetch_fyers, fetch_quotes, fetch_yahoo,
                         fyers_configured, fyers_session, fyers_token, market_is_open, secret, token_store)
-from builder import builder_ui, describe, load_frames, run_scan
+from builder import builder_ui, describe, load_daily_long, load_frames, run_scan
 from tech import indicators
 
 st.set_page_config(page_title="Pro Technical Screener", page_icon="📈", layout="wide")
@@ -169,11 +169,14 @@ with tab_scan:
     mode = st.radio("Scan kaise banayein?", ["🧱 Chartink builder", "Ready scans", "Type condition"], horizontal=True)
     table = None
     if mode == "🧱 Chartink builder":
-        clauses, join = builder_ui()
+        groups, top_join = builder_ui()
         st.markdown("**Aapka scan:**")
-        st.code(describe(clauses, join), language="text")
-        frames = load_frames(symbols, tf, source, token, hb, qb, live)[0]
-        table = run_scan(frames, clauses, join, tf != "1d")
+        st.code(describe(groups, top_join), language="text")
+        needs_mtf = any(c.get("tf", "Chart timeframe") != "Chart timeframe"
+                       for g in groups for c in g["clauses"])
+        chart_frames = load_frames(symbols, tf, source, token, hb, qb, live)[0]
+        daily_frames = load_daily_long(symbols, source, token, hb) if needs_mtf else {}
+        table = run_scan(chart_frames, daily_frames, groups, top_join, tf != "1d")
     else:
         if mode == "Ready scans":
             query = PRESETS[st.selectbox("Scan", list(PRESETS))]
