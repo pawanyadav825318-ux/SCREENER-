@@ -4,22 +4,28 @@ UI file. Data: datasource.py | Indicators: tech.py
 """
 import time
 from datetime import datetime
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
+
 from datasource import (HIST_TTL, IST, TFS, apply_overlay, build, fetch_fyers, fetch_quotes, fetch_yahoo,
                         fyers_configured, fyers_session, fyers_token, market_is_open, secret, token_store)
 from builder import builder_ui, describe, load_daily_long, load_frames, run_scan
 from tech import indicators
+
 st.set_page_config(page_title="Pro Technical Screener", page_icon="📈", layout="wide")
+
 NIFTY50 = """ADANIENT ADANIPORTS APOLLOHOSP ASIANPAINT AXISBANK BAJAJ-AUTO BAJFINANCE BAJAJFINSV BPCL BHARTIARTL
 BRITANNIA CIPLA COALINDIA DIVISLAB DRREDDY EICHERMOT GRASIM HCLTECH HDFCBANK HDFCLIFE HEROMOTOCO HINDALCO
 HINDUNILVR ICICIBANK ITC INDUSINDBK INFY JSWSTEEL KOTAKBANK LT M&M MARUTI NTPC NESTLEIND ONGC POWERGRID
 RELIANCE SBILIFE SHRIRAMFIN SBIN SUNPHARMA TCS TATACONSUM TMPV TATASTEEL TECHM TITAN ULTRACEMCO WIPRO""".split()
+
 EXTRA = """ADANIGREEN ADANIPOWER AMBUJACEM BANKBARODA BEL CANBK CHOLAFIN DLF DABUR GAIL GODREJCP HAL HAVELLS
 ICICIGI IOC IRCTC JINDALSTEL LICI LUPIN MUTHOOTFIN NAUKRI PFC PIDILITIND PNB RECLTD SIEMENS TVSMOTOR
 TRENT VBL VEDL ETERNAL ZYDUSLIFE TMCV""".split()
+
 PRESETS = {
     "RSI Oversold (RSI14 < 30)": "rsi14 < 30",
     "RSI Overbought (RSI14 > 70)": "rsi14 > 70",
@@ -50,8 +56,11 @@ PRESETS = {
     "20-Candle High Breakout": "close > high20",
     "20-Candle Low Breakdown": "close < low20",
 }
+
 SHOW = ["close", "chg_pct", "rsi14", "adx", "stoch_k", "bb_pct", "vwap", "atr_pct", "vol_ratio", "st_dir",
         "ema20", "ema50", "ema200"]
+
+
 def make_chart(o, symbol, intraday):
     o = o.tail(150)
     x = o.index.strftime("%d %b %H:%M" if intraday else "%d %b %y")
@@ -75,10 +84,13 @@ def make_chart(o, symbol, intraday):
     fig.update_layout(height=760, margin=dict(l=5, r=5, t=30, b=5), legend=dict(orientation="h", y=1.04),
                       title=f"{symbol} • {len(o)} candles")
     return fig
+
+
 # ======================= App =======================
 FYERS_CONFIGURED = fyers_configured()
 now = datetime.now(IST)
 market_open = market_is_open(now)
+
 pw = secret("APP_PASSWORD")
 if pw and not st.session_state.get("authed"):
     st.title("🔒 Pro Technical Screener")
@@ -89,6 +101,7 @@ if pw and not st.session_state.get("authed"):
     elif typed:
         st.error("Galat password")
     st.stop()
+
 with st.sidebar:
     st.title("⚙️ Settings")
     st.caption(f"{'🟢 NSE OPEN' if market_open else '🔴 NSE CLOSED'} • {now:%d %b %H:%M} IST")
@@ -111,7 +124,9 @@ with st.sidebar:
     if source == "fyers" and FYERS_CONFIGURED and st.button("🔐 Fyers dobara login", width="stretch"):
         token_store().clear()
         st.rerun()
+
 st.title("📈 Pro Technical Screener")
+
 token = ""
 if source == "fyers":
     if not FYERS_CONFIGURED:
@@ -124,26 +139,32 @@ if source == "fyers":
         st.link_button("🔐 Fyers se Login", fyers_session().generate_authcode(), type="primary")
         st.caption("Login ke baad app apne aap khul jaayegi. Ya sidebar se Yahoo chuno.")
         st.stop()
+
 if not symbols:
     st.warning("Sidebar mein kam se kam ek symbol daalein.")
     st.stop()
+
 now_ts = time.time()
 hb = int(now_ts // (HIST_TTL[tf] if source == "fyers" else 60))
 qb = int(now_ts // 10)
 with st.spinner("Data la raha hoon... (pehli baar 10-20 sec lag sakte hain)"):
     data, failed, err, nq = build(symbols, tf, source, token, hb, qb, live)
+
 if data.empty:
     st.error(f"Data nahi mila. {('API: ' + err) if err else ''}")
     if source == "fyers":
         st.caption("Token expire ho gaya ho sakta hai — sidebar mein 'Fyers dobara login' dabao.")
     st.stop()
+
 tag = f"Fyers live ({nq} LTP)" if source == "fyers" and nq else ("Fyers" if source == "fyers" else "Yahoo delayed")
 st.caption(f"{len(data)} stocks • {tf} • {tag} • updated {datetime.now(IST):%H:%M:%S}"
            + (f" • ⚠️ {len(failed)} load nahi hue" if failed else ""))
 if failed:
     with st.expander("Load na hone wale symbols"):
         st.write(", ".join(failed) + " — symbol rename/delist ho sakta hai." + (f" API: {err}" if err else ""))
+
 tab_scan, tab_dash, tab_chart = st.tabs(["🔍 Scanner", "📊 Dashboard", "🕯️ Chart"])
+
 with tab_scan:
     mode = st.radio("Scan kaise banayein?", ["🧱 Chartink builder", "Ready scans", "Type condition"], horizontal=True)
     table = None
@@ -184,8 +205,10 @@ with tab_scan:
 `rsi14` `ema9` `ema20` `ema50` `ema200` `sma20` `sma50` `sma200` `macd` `macd_sig` `macd_hist`
 `bb_up` `bb_lo` `bb_width` `bb_pct` `st_dir` `stoch_k` `stoch_d` `adx` `plus_di` `minus_di` `vwap`
 `atr14` `atr_pct` `open` `close` `volume` `chg_pct` `vol_ratio` `high20` `low20`
+
 Pichla candle: `prev_` lagao (`prev_rsi14`, `prev_close`).
 """)
+
 with tab_dash:
     st.subheader("Saare scans ek saath")
     rows = []
