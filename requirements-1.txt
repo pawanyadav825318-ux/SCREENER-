@@ -1,0 +1,7 @@
+streamlit>=1.51
+fyers-apiv3
+yfinance>=0.2.40
+pandas
+numpy
+plotly
+requests
